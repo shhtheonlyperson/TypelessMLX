@@ -1,0 +1,51 @@
+# Swift build artifacts
+.build/
+*.o
+*.d
+
+# App bundle / DMG output
+build/
+*.dmg
+*.app
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+backend/__pycache__/
+
+# macOS
+.DS_Store
+*.DS_Store
+
+# Xcode (if any)
+xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+
+# Models (multi-GB, never commit)
+models/
+*.safetensors
+*.bin
+*.pt
+*.gguf
+
+# Logs
+*.log
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude-internal plan files (not part of the project)
+.claude/
+CLAUDE.md
+OPTIMIZATIONS.md
+upgrade.md
+參考.jpeg
+icon/generate-icon.swift

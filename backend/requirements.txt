@@ -1,0 +1,5 @@
+mlx-whisper>=0.4.0
+mlx-audio>=0.3.0
+numpy>=1.26
+soundfile>=0.12
+huggingface_hub>=0.24

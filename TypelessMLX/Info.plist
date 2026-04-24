@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_TW</string>
+    <key>CFBundleExecutable</key>
+    <string>TypelessMLX</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.typelessmlx.app</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>TypelessMLX</string>
+    <key>CFBundleDisplayName</key>
+    <string>TypelessMLX</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 TypelessMLX</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>TypelessMLX 需要麥克風權限來錄製您的聲音並進行語音辨識。</string>
+<key>NSSpeechRecognitionUsageDescription</key>
+    <string>TypelessMLX 使用語音辨識功能在錄音期間顯示即時文字預覽，以及提供 macOS 內建語音辨識選項。</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>
