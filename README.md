@@ -1,16 +1,16 @@
 # TypelessMLX
 
 **macOS 語音聽寫 App** — 按住快捷鍵說話，文字自動打入當前視窗。  
-使用 [MLX Whisper](https://github.com/ml-explore/mlx-examples) 在 Apple Silicon 上做完全離線推理，預設採用台灣中文優化的 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25) 模型。
+使用 [MLX Whisper](https://github.com/ml-explore/mlx-examples) 在 Apple Silicon 上做完全離線推理，預設使用 mac 語音辨識，設定中有採用台灣中文優化的 [Breeze-ASR-25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25) 模型。
 
-> 靈感來自 [Spokenly](https://spokenly.app) 和 WhisperType，完全本地運算，無任何雲端連線。
+>會設計的原因是市面上常見的產品都是使用Whisper ，而我將目前台灣中文友善的breeze 且轉成MLX格式後做為主力引擎，使用且配合 Apple Intelligence做輕度修正。大概能做速度最佳化都弄上去．
 
 ---
 
 ## 功能特色
 
 - 🎙️ **一鍵聽寫**：按右 Option（可自訂）開始/停止錄音，自動貼入游標位置
-- 🇹🇼 **台灣中文優化**：預設 Breeze-ASR-25 模型，繁體中文效果最佳
+- 🇹🇼 **台灣中文優化**：使用Mac 語音辨識，可選擇 Breeze-ASR-25 模型，繁體中文效果最佳
 - ✏️ **自動標點符號**：語音辨識後自動補上逗號、句號、問號等標點
 - 🤖 **AI 文字修正**（選用）：macOS 26+ 可啟用 Apple Intelligence 進一步精煉標點與語句
 - 🔌 **完全離線**：所有推理在本機完成，無任何資料上傳
