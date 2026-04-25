@@ -154,7 +154,13 @@ class HotkeyManager {
             SpeechStreamer.shared.appendBuffer(buffer)
         }
 
-        AudioRecorder.shared.startRecording()
+        guard AudioRecorder.shared.startRecording() else {
+            AudioRecorder.shared.audioLevelHandler = nil
+            AudioRecorder.shared.audioBufferHandler = nil
+            SpeechStreamer.shared.cancelStreaming()
+            handleFailure(appState: appState, message: "錄音啟動失敗，請檢查麥克風或輸入裝置")
+            return
+        }
 
         lock.lock()
         isProcessing = false

@@ -7,8 +7,16 @@ let package = Package(
         .macOS(.v13)
     ],
     targets: [
+        .target(
+            name: "TypelessMLXCore",
+            path: "TypelessMLXCore/Sources",
+            linkerSettings: [
+                .linkedFramework("CoreAudio")
+            ]
+        ),
         .executableTarget(
             name: "TypelessMLX",
+            dependencies: ["TypelessMLXCore"],
             path: "TypelessMLX/Sources",
             linkerSettings: [
                 .linkedFramework("Cocoa"),
@@ -18,6 +26,11 @@ let package = Package(
                 .linkedFramework("UserNotifications"),
                 .unsafeFlags(["-Xlinker", "-weak_framework", "-Xlinker", "FoundationModels"])
             ]
+        ),
+        .executableTarget(
+            name: "TypelessMLXRegressionTests",
+            dependencies: ["TypelessMLXCore"],
+            path: "Tests/TypelessMLXRegressionTests"
         )
     ]
 )

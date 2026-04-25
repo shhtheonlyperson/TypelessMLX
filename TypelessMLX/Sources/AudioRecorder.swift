@@ -1,18 +1,23 @@
 import AVFoundation
 import CoreAudio
 import Foundation
+import TypelessMLXCore
 
-/// Records audio using a persistent AVAudioEngine for the entire app lifetime.
+/// Records audio using a fresh AVAudioEngine per session.
 /// Records in native mic format — mlx-whisper handles any conversion needed.
 class AudioRecorder: NSObject {
     static let shared = AudioRecorder()
 
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
+    private var recorder: AVAudioRecorder?
+    private var levelTimer: Timer?
     private var audioFile: AVAudioFile?
     private var currentURL: URL?
     private var isCurrentlyRecording = false
     private let lock = NSLock()
     private var recordingStartedAt: Date?  // for config-change grace period
+    private var lastStoppedAt: Date?
+    private let restartSettleInterval: TimeInterval = 1.25
 
     /// Called on the audio tap thread with a normalised 0–1 level each buffer (~23ms).
     var audioLevelHandler: ((Float) -> Void)?
@@ -22,20 +27,24 @@ class AudioRecorder: NSObject {
 
     private override init() {
         super.init()
-        logInfo("AudioRecorder", "Initialized (persistent AVAudioEngine)")
+        logInfo("AudioRecorder", "Initialized (per-session AVAudioEngine)")
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineConfigChange),
             name: .AVAudioEngineConfigurationChange,
-            object: engine
+            object: nil
         )
     }
 
     @objc private func handleEngineConfigChange(_ notification: Notification) {
+        guard let changedEngine = notification.object as? AVAudioEngine else { return }
         lock.lock()
+        let activeEngine = engine
         let recording = isCurrentlyRecording
         let startedAt = recordingStartedAt
         lock.unlock()
+        guard changedEngine === activeEngine else { return }
+
         // Ignore config changes within 2s of recording start — caused by our own setInputDevice() call
         if let startedAt = startedAt, Date().timeIntervalSince(startedAt) < 2.0 {
             logDebug("AudioRecorder", "Ignoring config change during startup grace period")
@@ -44,14 +53,15 @@ class AudioRecorder: NSObject {
         logWarn("AudioRecorder", "Audio engine configuration changed (recording=\(recording))")
         guard recording else { return }
         do {
-            engine.stop()
-            try engine.start()
+            changedEngine.stop()
+            try changedEngine.start()
             logInfo("AudioRecorder", "Engine restarted after config change")
         } catch {
             logError("AudioRecorder", "Failed to restart engine after config change: \(error)")
             lock.lock()
             isCurrentlyRecording = false
             audioFile = nil
+            engine = nil
             lock.unlock()
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .audioDeviceLost, object: nil)
@@ -65,44 +75,79 @@ class AudioRecorder: NSObject {
         return tempDir.appendingPathComponent(fileName)
     }
 
-    func startRecording() {
+    @discardableResult
+    func startRecording() -> Bool {
+        var settleDelay: TimeInterval = 0
         lock.lock()
         guard !isCurrentlyRecording else {
             logWarn("AudioRecorder", "Already recording, ignoring startRecording")
             lock.unlock()
-            return
+            return false
         }
+        settleDelay = AudioRecorderRouting.restartSettleDelay(
+            now: Date(),
+            lastStoppedAt: lastStoppedAt,
+            interval: restartSettleInterval
+        )
         lock.unlock()
 
-        removeTapSafely()
-        if engine.isRunning { engine.stop() }
+        if settleDelay > 0 {
+            logInfo("AudioRecorder", "Waiting \(String(format: "%.2f", settleDelay))s for input device to settle")
+            Thread.sleep(forTimeInterval: settleDelay)
+        }
 
+        let engine = AVAudioEngine()
         let url = tempAudioURL()
         logInfo("AudioRecorder", "Starting recording to: \(url.lastPathComponent)")
 
+        if shouldUseAVAudioRecorder(for: AppState.shared.inputDeviceUID) {
+            return startAVAudioRecorder(to: url)
+        }
+
         do {
             let inputNode = engine.inputNode
+
+            // Apply user-selected input device before asking the engine for formats.
+            // Changing devices after a tap is installed can leave the tap with a stale
+            // format and AVFAudio raises an Objective-C exception on the next start.
+            setInputDevice(uid: AppState.shared.inputDeviceUID, on: engine)
+
             let recordingFormat = inputNode.outputFormat(forBus: 0)
 
             logInfo("AudioRecorder", "Input format: \(recordingFormat.sampleRate)Hz, \(recordingFormat.channelCount)ch")
 
             guard recordingFormat.sampleRate > 0 && recordingFormat.channelCount > 0 else {
                 logError("AudioRecorder", "Invalid input format — no audio input device?")
-                return
+                return false
             }
 
-            // Record in native format — no conversion, no crashes
-            let file = try AVAudioFile(forWriting: url, settings: recordingFormat.settings)
-
             lock.lock()
-            self.audioFile = file
+            self.engine = engine
+            self.audioFile = nil
             self.currentURL = url
+            self.isCurrentlyRecording = true
+            self.recordingStartedAt = Date()
             lock.unlock()
 
-            inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
+            // Let AVAudioEngine choose the tap format. The file is opened lazily from
+            // the first real buffer, so file writing always matches the hardware.
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
                 guard let self = self else { return }
                 self.lock.lock()
                 let recording = self.isCurrentlyRecording
+                if recording, self.audioFile == nil {
+                    do {
+                        self.audioFile = try AVAudioFile(
+                            forWriting: url,
+                            settings: buffer.format.settings,
+                            commonFormat: buffer.format.commonFormat,
+                            interleaved: buffer.format.isInterleaved
+                        )
+                        logInfo("AudioRecorder", "Actual recording format: \(buffer.format.sampleRate)Hz, \(buffer.format.channelCount)ch")
+                    } catch {
+                        logError("AudioRecorder", "Failed to create audio file: \(error)")
+                    }
+                }
                 let file = self.audioFile
                 self.lock.unlock()
                 guard recording, let file = file else { return }
@@ -124,26 +169,86 @@ class AudioRecorder: NSObject {
                 self.audioBufferHandler?(buffer)
             }
 
-            // Apply user-selected input device (if any)
-            setInputDevice(uid: AppState.shared.inputDeviceUID)
             engine.prepare()
             try engine.start()
 
-            lock.lock()
-            isCurrentlyRecording = true
-            recordingStartedAt = Date()
-            lock.unlock()
-
             logInfo("AudioRecorder", "Recording started successfully")
+            return true
 
         } catch {
             logError("AudioRecorder", "Failed to start recording: \(error)")
-            removeTapSafely()
+            removeTapSafely(on: engine)
             if engine.isRunning { engine.stop() }
+            engine.reset()
             lock.lock()
+            isCurrentlyRecording = false
+            recordingStartedAt = nil
             audioFile = nil
             currentURL = nil
+            self.engine = nil
+            lastStoppedAt = Date()
             lock.unlock()
+            return false
+        }
+    }
+
+    private func startAVAudioRecorder(to url: URL) -> Bool {
+        do {
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsFloatKey: false
+            ]
+            let recorder = try AVAudioRecorder(url: url, settings: settings)
+            recorder.isMeteringEnabled = true
+            recorder.prepareToRecord()
+
+            lock.lock()
+            self.recorder = recorder
+            self.currentURL = url
+            self.isCurrentlyRecording = true
+            self.recordingStartedAt = Date()
+            lock.unlock()
+
+            guard recorder.record() else {
+                logError("AudioRecorder", "AVAudioRecorder refused to start")
+                lock.lock()
+                self.recorder = nil
+                self.currentURL = nil
+                self.isCurrentlyRecording = false
+                self.recordingStartedAt = nil
+                self.lastStoppedAt = Date()
+                lock.unlock()
+                return false
+            }
+
+            startRecorderLevelTimer(recorder)
+            logInfo("AudioRecorder", "Recording started successfully with AVAudioRecorder")
+            return true
+        } catch {
+            logError("AudioRecorder", "Failed to start AVAudioRecorder: \(error)")
+            lock.lock()
+            self.recorder = nil
+            self.currentURL = nil
+            self.isCurrentlyRecording = false
+            self.recordingStartedAt = nil
+            self.lastStoppedAt = Date()
+            lock.unlock()
+            return false
+        }
+    }
+
+    private func startRecorderLevelTimer(_ recorder: AVAudioRecorder) {
+        levelTimer?.invalidate()
+        levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self, weak recorder] _ in
+            guard let self = self, let recorder = recorder, recorder.isRecording else { return }
+            recorder.updateMeters()
+            let power = recorder.averagePower(forChannel: 0)
+            let normalized = max(0, min(1, (power + 55) / 55))
+            self.audioLevelHandler?(normalized)
         }
     }
 
@@ -159,13 +264,24 @@ class AudioRecorder: NSObject {
         isCurrentlyRecording = false
         recordingStartedAt = nil
         let url = currentURL
+        let engine = self.engine
+        let recorder = self.recorder
         audioFile = nil
         currentURL = nil
+        self.engine = nil
+        self.recorder = nil
+        lastStoppedAt = Date()
         lock.unlock()
 
         logInfo("AudioRecorder", "Stopping recording")
-        removeTapSafely()
-        if engine.isRunning { engine.stop() }
+        levelTimer?.invalidate()
+        levelTimer = nil
+        recorder?.stop()
+        if let engine {
+            removeTapSafely(on: engine)
+            if engine.isRunning { engine.stop() }
+            engine.reset()
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             guard let url = url else {
@@ -193,20 +309,30 @@ class AudioRecorder: NSObject {
         }
     }
 
-    private func removeTapSafely() {
-        engine.inputNode.removeTap(onBus: 0)
+    private func removeTapSafely(on engine: AVAudioEngine?) {
+        engine?.inputNode.removeTap(onBus: 0)
     }
 
     func forceReset() {
         logWarn("AudioRecorder", "Force reset")
         lock.lock()
+        let engine = self.engine
+        let recorder = self.recorder
         isCurrentlyRecording = false
         audioFile = nil
         currentURL = nil
+        self.engine = nil
+        self.recorder = nil
+        lastStoppedAt = Date()
         lock.unlock()
-        removeTapSafely()
-        if engine.isRunning { engine.stop() }
-        engine.reset()
+        levelTimer?.invalidate()
+        levelTimer = nil
+        recorder?.stop()
+        removeTapSafely(on: engine)
+        if let engine {
+            if engine.isRunning { engine.stop() }
+            engine.reset()
+        }
         logInfo("AudioRecorder", "Engine reset complete")
     }
 
@@ -266,10 +392,73 @@ class AudioRecorder: NSObject {
         return result
     }
 
-    /// Sets the engine's input device by UID. Call before engine.prepare()/start().
-    private func setInputDevice(uid: String) {
-        guard !uid.isEmpty else { return }
-        // Translate UID → AudioDeviceID
+    private func shouldUseAVAudioRecorder(for uid: String) -> Bool {
+        let targetUID = uid.isEmpty ? defaultInputDeviceUID() : uid
+        guard let device = inputDeviceDetails(uid: targetUID) else { return false }
+        let useAVAudioRecorder = AudioRecorderRouting.backend(for: device) == .avAudioRecorder
+        if useAVAudioRecorder {
+            logInfo("AudioRecorder", "Using AVAudioRecorder for Bluetooth input: \(device.name)")
+        }
+        return useAVAudioRecorder
+    }
+
+    private func inputDeviceDetails(uid: String?) -> AudioInputDeviceInfo? {
+        guard let uid = uid, let deviceID = deviceID(for: uid) else { return nil }
+
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var nameRef: CFString = "" as CFString
+        var nameSize = UInt32(MemoryLayout<CFString>.size)
+        guard AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &nameRef) == noErr else {
+            return nil
+        }
+
+        var transportAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var transport: UInt32 = 0
+        var transportSize = UInt32(MemoryLayout<UInt32>.size)
+        let transportStatus = AudioObjectGetPropertyData(deviceID, &transportAddress, 0, nil, &transportSize, &transport)
+
+        return AudioInputDeviceInfo(
+            name: nameRef as String,
+            uid: uid,
+            transport: transportStatus == noErr ? transport : nil
+        )
+    }
+
+    private func defaultInputDeviceUID() -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioDeviceID(0)
+        var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let systemObject = AudioObjectID(1)
+        guard AudioObjectGetPropertyData(systemObject, &address, 0, nil, &dataSize, &deviceID) == noErr else {
+            return nil
+        }
+
+        var uidAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var uidRef: CFString = "" as CFString
+        var uidSize = UInt32(MemoryLayout<CFString>.size)
+        guard AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &uidSize, &uidRef) == noErr else {
+            return nil
+        }
+        return uidRef as String
+    }
+
+    private func deviceID(for uid: String) -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -278,13 +467,25 @@ class AudioRecorder: NSObject {
         var uidRef: CFString = uid as CFString
         var deviceID: AudioDeviceID = kAudioDeviceUnknown
         var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let systemObject = AudioObjectID(1)  // kAudioObjectSystemObject
+        let systemObject = AudioObjectID(1)
         let status = AudioObjectGetPropertyData(
             systemObject, &address,
             UInt32(MemoryLayout<CFString>.size), &uidRef,
             &dataSize, &deviceID
         )
-        guard status == noErr, deviceID != kAudioDeviceUnknown else {
+        guard status == noErr, deviceID != kAudioDeviceUnknown else { return nil }
+        return deviceID
+    }
+
+    /// Sets the engine's input device by UID. Call before engine.prepare()/start().
+    private func setInputDevice(uid: String, on engine: AVAudioEngine) {
+        guard !uid.isEmpty else { return }
+        if uid == defaultInputDeviceUID() {
+            logInfo("AudioRecorder", "Selected input is already the system default; leaving AVAudioEngine on default input")
+            return
+        }
+
+        guard let deviceID = deviceID(for: uid) else {
             logWarn("AudioRecorder", "Could not find device for UID: \(uid)")
             return
         }
