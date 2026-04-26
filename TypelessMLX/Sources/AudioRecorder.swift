@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreAudio
 import Foundation
+import TypelessMLXAudioInputSupport
 import TypelessMLXAudioTapSupport
 
 /// Records audio using a persistent AVAudioEngine for the entire app lifetime.
@@ -66,12 +67,13 @@ class AudioRecorder: NSObject {
         return tempDir.appendingPathComponent(fileName)
     }
 
-    func startRecording() {
+    @discardableResult
+    func startRecording() -> Bool {
         lock.lock()
         guard !isCurrentlyRecording else {
             logWarn("AudioRecorder", "Already recording, ignoring startRecording")
             lock.unlock()
-            return
+            return false
         }
         lock.unlock()
 
@@ -83,6 +85,11 @@ class AudioRecorder: NSObject {
         logInfo("AudioRecorder", "Starting recording to: \(url.lastPathComponent)")
 
         do {
+            guard Self.hasAvailableInputDevice() else {
+                logError("AudioRecorder", "No available audio input device")
+                return false
+            }
+
             let inputNode = engine.inputNode
             // Apply user-selected input device before reading formats or installing the tap.
             setInputDevice(uid: AppState.shared.inputDeviceUID)
@@ -93,7 +100,7 @@ class AudioRecorder: NSObject {
 
             guard recordingFormat.sampleRate > 0 && recordingFormat.channelCount > 0 else {
                 logError("AudioRecorder", "Invalid input format — no audio input device?")
-                return
+                return false
             }
 
             lock.lock()
@@ -140,6 +147,7 @@ class AudioRecorder: NSObject {
             lock.unlock()
 
             logInfo("AudioRecorder", "Recording started successfully")
+            return true
 
         } catch {
             logError("AudioRecorder", "Failed to start recording: \(error)")
@@ -149,6 +157,7 @@ class AudioRecorder: NSObject {
             tapFileWriter = nil
             currentURL = nil
             lock.unlock()
+            return false
         }
     }
 
@@ -243,8 +252,9 @@ class AudioRecorder: NSObject {
             let bufPtr = UnsafeMutableRawPointer.allocate(byteCount: Int(inputSize), alignment: MemoryLayout<AudioBufferList>.alignment)
             defer { bufPtr.deallocate() }
             guard AudioObjectGetPropertyData(deviceID, &inputAddress, 0, nil, &inputSize, bufPtr) == noErr else { continue }
-            let bufList = bufPtr.assumingMemoryBound(to: AudioBufferList.self).pointee
-            guard bufList.mNumberBuffers > 0 else { continue }
+            let bufList = UnsafeMutableAudioBufferListPointer(bufPtr.assumingMemoryBound(to: AudioBufferList.self))
+            let channelCounts = bufList.map { $0.mNumberChannels }
+            guard AudioInputDeviceAvailability.hasInputChannels(bufferChannelCounts: channelCounts) else { continue }
 
             // Get device name
             var nameAddress = AudioObjectPropertyAddress(
@@ -269,6 +279,45 @@ class AudioRecorder: NSObject {
             result.append((name: nameRef as String, uid: uidRef as String))
         }
         return result
+    }
+
+    private static func hasAvailableInputDevice() -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        let systemObject = AudioObjectID(1)
+        guard AudioObjectGetPropertyDataSize(systemObject, &address, 0, nil, &dataSize) == noErr else { return false }
+        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(systemObject, &address, 0, nil, &dataSize, &deviceIDs) == noErr else { return false }
+
+        let inputChannelCounts = deviceIDs.map { inputChannelCount(for: $0) }
+        return AudioInputDeviceAvailability.hasAvailableInputDevice(inputChannelCounts: inputChannelCounts)
+    }
+
+    private static func inputChannelCount(for deviceID: AudioDeviceID) -> Int {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr, dataSize > 0 else {
+            return 0
+        }
+        let buffer = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(dataSize),
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { buffer.deallocate() }
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, buffer) == noErr else {
+            return 0
+        }
+        let bufferList = UnsafeMutableAudioBufferListPointer(buffer.assumingMemoryBound(to: AudioBufferList.self))
+        return AudioInputDeviceAvailability.inputChannelCount(bufferChannelCounts: bufferList.map { $0.mNumberChannels })
     }
 
     /// Sets the engine's input device by UID. Call before engine.prepare()/start().
