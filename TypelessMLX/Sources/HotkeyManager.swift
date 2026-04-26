@@ -72,31 +72,20 @@ class HotkeyManager {
             keyCode: keyCode,
             flagsRaw: flagsRaw,
             modifierIsActive: { hotkey in hotkey.modifier.isActive(flags) },
-            explicitKeyState: nil,
             source: "NSEvent.flagsChanged"
         )
     }
 
     private func handleCGEvent(_ event: CGEvent, type: CGEventType) {
+        guard type == .flagsChanged else { return }
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
         let flagsRaw = UInt64(flags.rawValue)
-        let explicitKeyState: Bool?
-
-        switch type {
-        case .keyDown:
-            explicitKeyState = true
-        case .keyUp:
-            explicitKeyState = false
-        default:
-            explicitKeyState = nil
-        }
 
         handleHotkeyTransition(
             keyCode: keyCode,
             flagsRaw: flagsRaw,
             modifierIsActive: { hotkey in hotkey.modifier.isActive(flags) },
-            explicitKeyState: explicitKeyState,
             source: "CGEvent.\(type.rawValue)"
         )
     }
@@ -105,7 +94,6 @@ class HotkeyManager {
         keyCode: Int,
         flagsRaw: UInt64,
         modifierIsActive: (RecognitionHotkey) -> Bool,
-        explicitKeyState: Bool?,
         source: String
     ) {
         guard let appState = appState else { return }
@@ -127,8 +115,7 @@ class HotkeyManager {
             return
         }
 
-        let keyEventState = configuredHotkey.relatedKeyCodes.contains(keyCode) ? explicitKeyState : nil
-        let isKeyPressed = keyEventState ?? configuredHotkey.isPressed(
+        let isKeyPressed = configuredHotkey.isPressed(
             eventKeyCode: keyCode,
             flagsRaw: flagsRaw,
             modifierIsActive: modifierIsActive(configuredHotkey)
@@ -172,9 +159,7 @@ class HotkeyManager {
     }
 
     private func setupEventTap() {
-        let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue) |
-                   CGEventMask(1 << CGEventType.keyDown.rawValue) |
-                   CGEventMask(1 << CGEventType.keyUp.rawValue)
+        let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
         guard let tap = CGEvent.tapCreate(

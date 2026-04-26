@@ -11,7 +11,6 @@ struct RecognitionHotkey: Identifiable, Equatable {
         static let leftOption: UInt64 = 0x00000020
         static let rightOption: UInt64 = 0x00000040
         static let rightControl: UInt64 = 0x00002000
-        static let function: UInt64 = 0x00800000
     }
 
     enum ModifierKind {
@@ -19,7 +18,6 @@ struct RecognitionHotkey: Identifiable, Equatable {
         case control
         case command
         case shift
-        case function
 
         func isActive(_ flags: NSEvent.ModifierFlags) -> Bool {
             switch self {
@@ -31,8 +29,6 @@ struct RecognitionHotkey: Identifiable, Equatable {
                 return flags.contains(.command)
             case .shift:
                 return flags.contains(.shift)
-            case .function:
-                return flags.contains(.function)
             }
         }
 
@@ -46,8 +42,6 @@ struct RecognitionHotkey: Identifiable, Equatable {
                 return flags.contains(.maskCommand)
             case .shift:
                 return flags.contains(.maskShift)
-            case .function:
-                return flags.contains(.maskSecondaryFn)
             }
         }
     }
@@ -118,13 +112,6 @@ struct RecognitionHotkey: Identifiable, Equatable {
             modifier: .shift,
             relatedKeyCodes: [kVK_Shift, kVK_RightShift],
             deviceMask: DeviceMask.leftShift
-        ),
-        RecognitionHotkey(
-            keyCode: kVK_Function,
-            displayName: "Fn",
-            modifier: .function,
-            relatedKeyCodes: [kVK_Function],
-            deviceMask: DeviceMask.function
         )
     ]
 

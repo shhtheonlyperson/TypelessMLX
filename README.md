@@ -97,7 +97,7 @@ export SIGN_IDENTITY="Apple Development: Your Name (TEAMID)"
 |------|------|
 | 🎙️ 麥克風 | 錄製語音 |
 | ♿ 輔助使用 | 模擬 Cmd+V 貼入文字 |
-| ⌨️ 輸入監控 | 偵測全域 Right Option 快捷鍵 |
+| ⌨️ 輸入監控 | 偵測全域辨識快捷鍵 |
 
 ---
 
@@ -105,7 +105,7 @@ export SIGN_IDENTITY="Apple Development: Your Name (TEAMID)"
 
 ```
 按辨識快捷鍵
-    └─ HotkeyManager (NSEvent.flagsChanged)
+    └─ HotkeyManager (CGEvent/NSEvent flagsChanged)
         └─ AudioRecorder (AVAudioEngine, WAV)
             └─ WhisperBridge (stdin/stdout JSON-RPC)
                 └─ transcribe_server.py
