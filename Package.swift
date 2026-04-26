@@ -14,9 +14,16 @@ let package = Package(
                 .linkedFramework("AVFoundation")
             ]
         ),
+        .target(
+            name: "TypelessMLXAudioInputSupport",
+            path: "TypelessMLX/AudioInputSupport"
+        ),
         .executableTarget(
             name: "TypelessMLX",
-            dependencies: ["TypelessMLXAudioTapSupport"],
+            dependencies: [
+                "TypelessMLXAudioTapSupport",
+                "TypelessMLXAudioInputSupport"
+            ],
             path: "TypelessMLX/Sources",
             linkerSettings: [
                 .linkedFramework("Cocoa"),
@@ -31,6 +38,11 @@ let package = Package(
             name: "TypelessMLXAudioTapFormatTests",
             dependencies: ["TypelessMLXAudioTapSupport"],
             path: "TypelessMLX/Tests/AudioTapFormat"
+        ),
+        .executableTarget(
+            name: "TypelessMLXAudioInputAvailabilityTests",
+            dependencies: ["TypelessMLXAudioInputSupport"],
+            path: "TypelessMLX/Tests/AudioInputAvailability"
         )
     ]
 )
