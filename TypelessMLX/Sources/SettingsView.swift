@@ -87,11 +87,25 @@ struct GeneralSettingsTab: View {
                 }
                 .buttonStyle(.link)
             }
+
+            Section("關於") {
+                HStack {
+                    Text("版本")
+                    Spacer()
+                    Text(appVersion).foregroundColor(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         .onAppear {
             inputDevices = AudioRecorder.availableInputDevices()
         }
+    }
+
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        return "\(version) (build \(build))"
     }
 
     private var hotkeyDisplayName: String {

@@ -7,6 +7,8 @@ APP_NAME="TypelessMLX"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 ENTITLEMENTS="$PROJECT_DIR/TypelessMLX/TypelessMLX.entitlements"
 INSTALL_DIR="/Applications/$APP_NAME.app"
+APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$PROJECT_DIR/TypelessMLX/Info.plist" 2>/dev/null || echo "0.0.0")
+DMG_PATH="$BUILD_DIR/${APP_NAME}-${APP_VERSION}.dmg"
 INSTALL_APP=0
 ALLOW_ADHOC_SIGNING="${ALLOW_ADHOC_SIGNING:-0}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
@@ -57,7 +59,7 @@ if [ -z "$SIGN_IDENTITY" ]; then
 fi
 
 echo "╔══════════════════════════════════════╗"
-echo "║        TypelessMLX Build v1.0        ║"
+echo "║   TypelessMLX Build v${APP_VERSION}        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -130,18 +132,27 @@ codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 codesign -dvv "$APP_BUNDLE" 2>&1 | grep -E "Identifier|Authority|TeamIdentifier|Signature" || true
 codesign -dr - "$APP_BUNDLE" 2>&1 | sed 's/^/# /' || true
 
-# --- Step 4: Report ---
+# --- Step 4: Create DMG ---
+echo ""
+echo "💿 Creating DMG..."
+hdiutil create -volname "$APP_NAME" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_PATH" 2>&1
+DMG_SIZE=$(du -sh "$DMG_PATH" | awk '{print $1}')
+echo "  ✅ DMG: $DMG_PATH ($DMG_SIZE)"
+
+# --- Step 5: Report ---
 echo ""
 APP_SIZE=$(du -sh "$APP_BUNDLE" | awk '{print $1}')
 BINARY_SIZE=$(du -sh "$APP_BUNDLE/Contents/MacOS/TypelessMLX" | awk '{print $1}')
 echo "═══════════════════════════════════════"
-echo "  ✅ Build complete!"
+echo "  ✅ Build complete! v${APP_VERSION}"
 echo "  📍 $APP_BUNDLE"
+echo "  💿 $DMG_PATH"
 echo "  📏 App size: $APP_SIZE"
 echo "  📏 Binary: $BINARY_SIZE"
+echo "  📏 DMG: $DMG_SIZE"
 echo "═══════════════════════════════════════"
 
-# --- Step 5: Install (optional) ---
+# --- Step 6: Install (optional) ---
 if [ "$INSTALL_APP" = "1" ]; then
     echo ""
     echo "📲 Installing to /Applications..."
