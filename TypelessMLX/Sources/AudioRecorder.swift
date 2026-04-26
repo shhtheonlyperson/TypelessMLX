@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreAudio
 import Foundation
+import TypelessMLXAudioTapSupport
 
 /// Records audio using a persistent AVAudioEngine for the entire app lifetime.
 /// Records in native mic format — mlx-whisper handles any conversion needed.
@@ -8,7 +9,7 @@ class AudioRecorder: NSObject {
     static let shared = AudioRecorder()
 
     private let engine = AVAudioEngine()
-    private var audioFile: AVAudioFile?
+    private var tapFileWriter: AudioTapFileWriter?
     private var currentURL: URL?
     private var isCurrentlyRecording = false
     private let lock = NSLock()
@@ -51,7 +52,7 @@ class AudioRecorder: NSObject {
             logError("AudioRecorder", "Failed to restart engine after config change: \(error)")
             lock.lock()
             isCurrentlyRecording = false
-            audioFile = nil
+            tapFileWriter = nil
             lock.unlock()
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .audioDeviceLost, object: nil)
@@ -76,12 +77,16 @@ class AudioRecorder: NSObject {
 
         removeTapSafely()
         if engine.isRunning { engine.stop() }
+        engine.reset()
 
         let url = tempAudioURL()
         logInfo("AudioRecorder", "Starting recording to: \(url.lastPathComponent)")
 
         do {
             let inputNode = engine.inputNode
+            // Apply user-selected input device before reading formats or installing the tap.
+            setInputDevice(uid: AppState.shared.inputDeviceUID)
+
             let recordingFormat = inputNode.outputFormat(forBus: 0)
 
             logInfo("AudioRecorder", "Input format: \(recordingFormat.sampleRate)Hz, \(recordingFormat.channelCount)ch")
@@ -91,23 +96,25 @@ class AudioRecorder: NSObject {
                 return
             }
 
-            // Record in native format — no conversion, no crashes
-            let file = try AVAudioFile(forWriting: url, settings: recordingFormat.settings)
-
             lock.lock()
-            self.audioFile = file
+            self.tapFileWriter = AudioTapFileWriter(url: url)
             self.currentURL = url
             lock.unlock()
 
-            inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
+            // Let AVAudioEngine choose the tap format, then create the file lazily
+            // from the first real buffer. This avoids stale hardware-format crashes.
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
                 guard let self = self else { return }
                 self.lock.lock()
                 let recording = self.isCurrentlyRecording
-                let file = self.audioFile
+                let writer = self.tapFileWriter
                 self.lock.unlock()
-                guard recording, let file = file else { return }
+                guard recording, let writer = writer else { return }
                 do {
-                    try file.write(from: buffer)
+                    let openedFile = try writer.write(buffer)
+                    if openedFile {
+                        logInfo("AudioRecorder", "Audio file opened with tap format: \(buffer.format.sampleRate)Hz, \(buffer.format.channelCount)ch")
+                    }
                 } catch {
                     logError("AudioRecorder", "Write error: \(error)")
                 }
@@ -124,8 +131,6 @@ class AudioRecorder: NSObject {
                 self.audioBufferHandler?(buffer)
             }
 
-            // Apply user-selected input device (if any)
-            setInputDevice(uid: AppState.shared.inputDeviceUID)
             engine.prepare()
             try engine.start()
 
@@ -141,7 +146,7 @@ class AudioRecorder: NSObject {
             removeTapSafely()
             if engine.isRunning { engine.stop() }
             lock.lock()
-            audioFile = nil
+            tapFileWriter = nil
             currentURL = nil
             lock.unlock()
         }
@@ -159,7 +164,7 @@ class AudioRecorder: NSObject {
         isCurrentlyRecording = false
         recordingStartedAt = nil
         let url = currentURL
-        audioFile = nil
+        tapFileWriter = nil
         currentURL = nil
         lock.unlock()
 
@@ -201,7 +206,7 @@ class AudioRecorder: NSObject {
         logWarn("AudioRecorder", "Force reset")
         lock.lock()
         isCurrentlyRecording = false
-        audioFile = nil
+        tapFileWriter = nil
         currentURL = nil
         lock.unlock()
         removeTapSafely()
