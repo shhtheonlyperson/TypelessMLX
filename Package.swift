@@ -7,8 +7,16 @@ let package = Package(
         .macOS(.v13)
     ],
     targets: [
+        .target(
+            name: "TypelessMLXAudioTapSupport",
+            path: "TypelessMLX/AudioSupport",
+            linkerSettings: [
+                .linkedFramework("AVFoundation")
+            ]
+        ),
         .executableTarget(
             name: "TypelessMLX",
+            dependencies: ["TypelessMLXAudioTapSupport"],
             path: "TypelessMLX/Sources",
             linkerSettings: [
                 .linkedFramework("Cocoa"),
@@ -18,6 +26,11 @@ let package = Package(
                 .linkedFramework("UserNotifications"),
                 .unsafeFlags(["-Xlinker", "-weak_framework", "-Xlinker", "FoundationModels"])
             ]
+        ),
+        .executableTarget(
+            name: "TypelessMLXAudioTapFormatTests",
+            dependencies: ["TypelessMLXAudioTapSupport"],
+            path: "TypelessMLX/Tests/AudioTapFormat"
         )
     ]
 )
