@@ -7,8 +7,13 @@ let package = Package(
         .macOS(.v13)
     ],
     targets: [
+        .target(
+            name: "TypelessMLXAudioInputSupport",
+            path: "TypelessMLX/AudioInputSupport"
+        ),
         .executableTarget(
             name: "TypelessMLX",
+            dependencies: ["TypelessMLXAudioInputSupport"],
             path: "TypelessMLX/Sources",
             linkerSettings: [
                 .linkedFramework("Cocoa"),
@@ -18,6 +23,11 @@ let package = Package(
                 .linkedFramework("UserNotifications"),
                 .unsafeFlags(["-Xlinker", "-weak_framework", "-Xlinker", "FoundationModels"])
             ]
+        ),
+        .executableTarget(
+            name: "TypelessMLXAudioInputAvailabilityTests",
+            dependencies: ["TypelessMLXAudioInputSupport"],
+            path: "TypelessMLX/Tests/AudioInputAvailability"
         )
     ]
 )
