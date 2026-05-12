@@ -1,4 +1,5 @@
 import Foundation
+import TypelessMLXModelCacheSupport
 
 /// Manages on-disk cache for MLX models (HuggingFace Hub + local converted models).
 class ModelManager: ObservableObject {
@@ -11,6 +12,7 @@ class ModelManager: ObservableObject {
 
     private var downloadProcess: Process?
     private let queue = DispatchQueue(label: "com.typelessmlx.modelmanager", qos: .utility)
+    private let hfCache = HuggingFaceModelCache()
 
     private init() {
         refreshAllStatuses()
@@ -148,36 +150,15 @@ sys.stdout.flush()
         if model.isLocal {
             return URL(fileURLWithPath: model.repoOrPath)
         }
-        // HuggingFace Hub format: models--org--repo
-        let sanitized = model.repoOrPath.replacingOccurrences(of: "/", with: "--")
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/huggingface/hub/models--\(sanitized)")
+        return hfCache.cacheDirectory(forRepoID: model.repoOrPath)
     }
 
     private func diskSize(for model: MLXModel) -> Int64 {
         guard let dir = cacheDirectory(for: model) else { return 0 }
         if model.isLocal {
             guard FileManager.default.fileExists(atPath: dir.path) else { return 0 }
-            return directorySize(dir)
+            return ModelDirectorySize.bytes(at: dir)
         }
-        // HF Hub stores actual files in blobs/ (snapshots/ only has symlinks)
-        let blobs = dir.appendingPathComponent("blobs")
-        guard FileManager.default.fileExists(atPath: blobs.path) else { return 0 }
-        let size = directorySize(blobs)
-        return size > 1024 ? size : 0
-    }
-
-    private func directorySize(_ url: URL) -> Int64 {
-        guard let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else { return 0 }
-        var total: Int64 = 0
-        for case let fileURL as URL in enumerator {
-            let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-            total += Int64(size)
-        }
-        return total
+        return hfCache.cachedSize(forRepoID: model.repoOrPath)
     }
 }
